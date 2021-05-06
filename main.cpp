@@ -80,8 +80,8 @@ public:
             }
 
             current_value = data[current_index];
-            left_value = data[get_left_child_index(current_index)];
-            right_value = data[get_right_child_index(current_index)];
+            left_value = get_left_child_index(current_index) < 256 ? data[get_left_child_index(current_index)] : nullptr;
+            right_value = get_right_child_index(current_index) < 256 ? data[get_right_child_index(current_index)] : nullptr;
 
             if (left_value == nullptr) {
                 break;
@@ -119,7 +119,7 @@ private:
 
 size_t* get_frequencies(const char* data, size_t size) {
     auto frequencies = new size_t[256];
-    memset(frequencies, 0, 256);
+    memset(frequencies, 0, 256 * sizeof(size_t));
 
     for (size_t i = 0; i < size; ++i) {
         frequencies[(unsigned char)(data[i])]++;
@@ -142,7 +142,7 @@ void build_table(TreeNode* current_node, TableRow* table, bool* stack, size_t st
     }
 
     if (current_node->symbol < 256) {
-        auto row = &table[current_node->symbol];
+        auto row = &(table[(unsigned char)(current_node->symbol)]);
         row->symbol = char(current_node->symbol);
         row->len = stack_size;
         row->code = new bool[stack_size];
@@ -176,20 +176,22 @@ TreeNode* recreate_encode_tree(TableRow* table) {
     auto root = new TreeNode({0, 256, nullptr, nullptr});
     for (int i = 0; i < 256; ++i) {
         TreeNode* current_node = root;
-        for(int j = 0; j < table[i].len; ++j) {
-            if (table[i].code[j]) { // right
-                if (current_node->right == nullptr) {
-                    current_node->right = new TreeNode({0, 256, nullptr, nullptr});
+        if (table[i].len) {
+            for (int j = 0; j < table[i].len; ++j) {
+                if (table[i].code[j]) { // right
+                    if (current_node->right == nullptr) {
+                        current_node->right = new TreeNode({0, 256, nullptr, nullptr});
+                    }
+                    current_node = current_node->right;
+                } else { // left
+                    if (current_node->left == nullptr) {
+                        current_node->left = new TreeNode({0, 256, nullptr, nullptr});
+                    }
+                    current_node = current_node->left;
                 }
-                current_node = current_node->right;
-            } else { // left
-                if (current_node->left == nullptr) {
-                    current_node->left = new TreeNode({0, 256, nullptr, nullptr});
-                }
-                current_node = current_node->left;
             }
+            current_node->symbol = (unsigned char) table[i].symbol;
         }
-        current_node->symbol = (unsigned char)table[i].symbol;
     }
     return root;
 }
@@ -207,8 +209,8 @@ size_t res_length(size_t* frequencies, TableRow* table){
 
 void encode_with_table(char* output_data, TableRow* table, const char* data, size_t size, size_t offset) {
     for (size_t i = 0; i < size; ++i) {
-        for(int j = 0; j < table[data[i]].len; ++j) {
-            set_bit_value(output_data, offset, table[data[i]].code[j]);
+        for(int j = 0; j < table[(unsigned char)(data[i])].len; ++j) {
+            set_bit_value(output_data, offset, table[(unsigned char)(data[i])].code[j]);
             offset++;
         }
     }
@@ -256,7 +258,6 @@ size_t write_table(char *output_data, TableRow* table, size_t offset) {
             if(table[i].len % 8 != 0){
                 offset += 8 - table[i].len % 8;
             }
-
         }
     }
 
@@ -265,7 +266,19 @@ size_t write_table(char *output_data, TableRow* table, size_t offset) {
     return offset;
 }
 
-char* encode(const char* data, size_t size) {
+void print_table(TableRow* table) {
+    for (int i = 0; i < 256; ++i) {
+        if (table[i].len > 0) {
+            printf("%c: ", table[i].symbol);
+            for (int j = 0; j < table[i].len; ++j) {
+                printf("%d", table[i].code[j] ? 1 : 0);
+            }
+            printf("\n");
+        }
+    }
+}
+
+char* encode(const char* data, size_t &size) {
 
     auto frequencies = get_frequencies(data, size);
     auto root = build_encode_tree(frequencies);
@@ -286,29 +299,18 @@ char* encode(const char* data, size_t size) {
 
     size_t offset = write_table(output_data, table, 64);
     encode_with_table(output_data, table, data, size, offset);
+    size = output_len;
 
-    for (int i = 0; i < 256; ++i) {
-        if (table[i].len > 0) {
-            printf("%c: ", table[i].symbol);
-            for (int j = 0; j < table[i].len; ++j) {
-                printf("%d", table[i].code[j] ? 1 : 0);
-            }
-            printf("\n");
-        }
-    }
-
-    for(int i = 0; i < output_len; ++i) {
-        printf("%02x ", (unsigned char)output_data[i]);
-    }
+    print_table(table);
 
     delete[] frequencies;
     return output_data;
 }
 
-char *recreate_data(const char *input_data, TreeNode* root, size_t offset, size_t max_offset) {
+char *recreate_data(const char *input_data, TreeNode* root, size_t offset, size_t max_offset, size_t &size) {
     char *recreated_data = (char *)calloc(128, sizeof(char)); //will realloc if needed
     size_t allocated_size = 128;
-    size_t size = 0;
+    size = 0;
 
     TreeNode* current_node = root;
     for (; offset < max_offset; ++offset) {
@@ -329,36 +331,79 @@ char *recreate_data(const char *input_data, TreeNode* root, size_t offset, size_
     return recreated_data;
 }
 
-char* decode(const char *input_data){
+char* decode(const char *input_data, size_t& size){
     auto table = new TableRow[256];
+    for (int i = 0; i < 256; ++i) {
+        table[i] = TableRow({0, 0, nullptr});
+    }
     size_t max_offset = *((size_t*)(void*)input_data);
     size_t offset = read_table(input_data, table, 64);
 
-    cout << endl << "Read table" << endl;
-
-    for (int i = 0; i < 256; ++i) {
-        if (table[i].len > 0) {
-            printf("%c: ", table[i].symbol);
-            for (int j = 0; j < table[i].len; ++j) {
-                printf("%d", table[i].code[j] ? 1 : 0);
-            }
-            printf("\n");
-        }
-    }
-
     TreeNode* root = recreate_encode_tree(table);
-    char* decoded = recreate_data(input_data, root, offset, max_offset);
-    puts(decoded);
+    char* decoded = recreate_data(input_data, root, offset, max_offset, size);
 
     return decoded;
 }
 
-int main() {
-    string input = "beep boop beer!";
-    cout << (1 << 7) << endl;
+char* read_file(const char* filename, size_t& file_size) {
+    FILE *file;
+    char *buffer;
 
-    char* output = encode(input.c_str(), input.size());
-    char* decoded = decode(output);
+    file = fopen (filename, "rb" );
+    if( !file ) {
+        perror(filename);
+        exit(1);
+    }
+
+    fseek(file, 0l, SEEK_END);
+    file_size = ftell(file);
+    rewind(file);
+
+    buffer = (char*)(calloc( 1, file_size+1 ));
+    if( !buffer ) {
+        printf("memory alloc fails");
+        exit(1);
+    }
+
+    if( 1!=fread( buffer , file_size, 1 , file) ) {
+        printf("entire read fails");
+        exit(1);
+    }
+
+    fclose(file);
+    return buffer;
+}
+
+void write_file(const char* filename, const char* data, size_t size) {
+    FILE *file = fopen(filename, "wb");
+
+    int results = fwrite((void*)data, size, 1, file);
+    if (results == EOF) {
+        printf("Can't write to file %s\n", filename);
+    }
+
+    fclose(file);
+}
+
+int main(int argc, char **argv) {
+
+    assert(argc >= 3);
+    char* mode = argv[1];
+    size_t size;
+    char* input = read_file(argv[2], size);
+
+
+    if(strcmp(mode, "encode") == 0) {
+        char* output = encode(input, size);
+        string filename = argv[2];
+        write_file((filename + ".archive").c_str(), output, size);
+    } else if(strcmp(mode, "decode") == 0) {
+        char* output = decode(input, size);
+        string filename = argv[2];
+        write_file(filename.substr(0, filename.size() - 8).c_str(), output, size);
+    }
+
+    free(input);
 
     return 0;
 }
