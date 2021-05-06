@@ -301,8 +301,6 @@ char* encode(const char* data, size_t &size) {
     encode_with_table(output_data, table, data, size, offset);
     size = output_len;
 
-    print_table(table);
-
     delete[] frequencies;
     return output_data;
 }
@@ -390,20 +388,28 @@ int main(int argc, char **argv) {
     assert(argc >= 3);
     char* mode = argv[1];
     size_t size;
-    char* input = read_file(argv[2], size);
 
-
-    if(strcmp(mode, "encode") == 0) {
-        char* output = encode(input, size);
-        string filename = argv[2];
-        write_file((filename + ".archive").c_str(), output, size);
-    } else if(strcmp(mode, "decode") == 0) {
-        char* output = decode(input, size);
-        string filename = argv[2];
-        write_file(filename.substr(0, filename.size() - 8).c_str(), output, size);
+    for (int i = 2; i < argc; ++i){
+        char* input = read_file(argv[i], size);
+        if(strcmp(mode, "encode") == 0) {
+            char* output = encode(input, size);
+            string filename = argv[i];
+            write_file((filename + ".archive").c_str(), output, size);
+            delete[] output;
+        } else if(strcmp(mode, "decode") == 0) {
+            char* output = decode(input, size);
+            string filename = argv[i];
+            if(filename.substr(filename.size() - 8, filename.size()) != ".archive"){
+                printf("Incorrect file format for %s\nshould be *.archive\n", filename.c_str());
+                continue;
+            }
+            write_file(filename.substr(0, filename.size() - 8).c_str(), output, size);
+            delete[] output;
+        } else {
+            printf("Incorrect mode\n");
+            exit(1);
+        }
+        free(input);
     }
-
-    free(input);
-
     return 0;
 }
